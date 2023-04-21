@@ -17,15 +17,15 @@ import {
 import Stats from 'three/examples/jsm/libs/stats.module' 
 import { GUI } from 'dat.gui'
 
-export const helloCube = (canvas: any) => {
-    const renderer = new WebGLRenderer({canvas: canvas, antialias: true, alpha: true});
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
+export const helloCube = (map_canvas: any) => {
+    const mapRenderer = new WebGLRenderer({canvas: map_canvas, antialias: true, alpha: true});
+    mapRenderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(mapRenderer.domElement);
+    mapRenderer.setSize(window.innerWidth, window.innerHeight);
+    mapRenderer.setPixelRatio(window.devicePixelRatio);
 
     const aspect = window.innerWidth / window.innerHeight;
-    const camera = new OrthographicCamera(-1, 1, 1/aspect, -1/aspect, -1, 1);
+    const camera = new OrthographicCamera(-1, 1, -1/aspect, 1/aspect, -1, 1);
     const scene = new Scene();
     scene.background = new Color(0xffffff);
 
@@ -38,6 +38,7 @@ export const helloCube = (canvas: any) => {
     const planeGeometry = new PlaneGeometry(2, 1);
     const planeMaterial = new MeshBasicMaterial({color: 0xc0c0c0, side: DoubleSide});
     const planeMesh = new Mesh(planeGeometry, planeMaterial);
+    planeMesh.rotateX(Math.PI);
     planeMesh.position.z = -0.1;
     scene.add(planeMesh)
 
@@ -46,6 +47,10 @@ export const helloCube = (canvas: any) => {
     document.body.appendChild(stats.dom);
     const gui = new GUI();
 
+    loadEnvironmentTexture('blue_photo_studio_1k.hdr', './blue_photo_studio_1k.hdr', (texture: Texture) => {
+        planeMaterial.map = texture;
+        planeMaterial.needsUpdate = true;
+    });
     setupDragDrop('holder', 'hover', (file: File, event: ProgressEvent<FileReader>) => {
         // @ts-ignore
         loadEnvironmentTexture(file.name, event.target.result, (texture: Texture) => {
@@ -58,12 +63,12 @@ export const helloCube = (canvas: any) => {
         const width = window.innerWidth;
         const height = window.innerHeight;
         const aspect = width / height;
-        camera.left = 1;
+        camera.left = -1;
         camera.right = 1;
-        camera.bottom = 1/aspect;
-        camera.top = -1/aspect;
+        camera.bottom = -1/aspect;
+        camera.top = 1/aspect;
         camera.updateProjectionMatrix();
-        renderer.setSize(width, height);
+        mapRenderer.setSize(width, height);
     }, false);
 
     let previousTimeStamp: number | undefined;
@@ -76,10 +81,10 @@ export const helloCube = (canvas: any) => {
     }
 
     const render = () => {
-        renderer.render(scene, camera);
+        mapRenderer.render(scene, camera);
     }
     requestAnimationFrame(animate);
 }
 
 // @ts-ignore
-helloCube(three_canvas);
+helloCube(three_canvas_map);
