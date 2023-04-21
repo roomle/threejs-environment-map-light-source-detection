@@ -1,3 +1,5 @@
+import { setupDragDrop } from './drag_target';
+import { loadEnvironmentTexture } from './environment'; 
 import {
     AxesHelper,
     Color,
@@ -6,6 +8,7 @@ import {
     MeshBasicMaterial,
     PlaneGeometry,
     Scene,
+    Texture,
     WebGLRenderer,
     OrthographicCamera,
     DoubleSide,
@@ -22,7 +25,7 @@ export const helloCube = (canvas: any) => {
     renderer.setPixelRatio(window.devicePixelRatio);
 
     const aspect = window.innerWidth / window.innerHeight;
-    const camera = new OrthographicCamera(-1, 1, -1/aspect, 1/aspect, -1, 1);
+    const camera = new OrthographicCamera(-1, 1, 1/aspect, -1/aspect, -1, 1);
     const scene = new Scene();
     scene.background = new Color(0xffffff);
 
@@ -43,14 +46,22 @@ export const helloCube = (canvas: any) => {
     document.body.appendChild(stats.dom);
     const gui = new GUI();
 
+    setupDragDrop('holder', 'hover', (file: File, event: ProgressEvent<FileReader>) => {
+        // @ts-ignore
+        loadEnvironmentTexture(file.name, event.target.result, (texture: Texture) => {
+            planeMaterial.map = texture;
+            planeMaterial.needsUpdate = true;
+        });
+    });
+
     window.addEventListener('resize', () => {
         const width = window.innerWidth;
         const height = window.innerHeight;
         const aspect = width / height;
         camera.left = 1;
         camera.right = 1;
-        camera.bottom = -1/aspect;
-        camera.top = 1/aspect;
+        camera.bottom = 1/aspect;
+        camera.top = -1/aspect;
         camera.updateProjectionMatrix();
         renderer.setSize(width, height);
     }, false);
