@@ -1,13 +1,13 @@
 import { setupDragDrop } from './drag_target';
 import { loadEnvironmentTexture } from './environment'; 
-import { 
+import {
+    LightSample,
     LightSourceDetector,
-    TextureConverter,
-    TextureConverterResult,
 } from './light_source_detection';
 import {
     AxesHelper,
     BoxGeometry,
+    BufferGeometry,
     CircleGeometry,
     Color,
     ColorRepresentation,
@@ -15,6 +15,8 @@ import {
     DoubleSide,
     GridHelper,
     Light,
+    LineBasicMaterial,
+    LineSegments,
     Mesh,
     MeshBasicMaterial,
     MeshPhysicalMaterial,
@@ -29,6 +31,7 @@ import {
     sRGBEncoding,
     Texture,
     Vector2,
+    Vector3,
     WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
@@ -191,10 +194,10 @@ class EnvironmentManager {
 
     get lightSourceDetector(): LightSourceDetector {
         this._lightSourceDetector = this._lightSourceDetector ?? new LightSourceDetector({
-            numberOfSamples: 1000,
+            numberOfSamples: 2000,
             width: this.detectorWidth,
             height: this.detectorHeight,
-            sampleThreshold: 0.5,
+            sampleThreshold: 0.9,
         });
         return this._lightSourceDetector;
     }
@@ -211,9 +214,11 @@ class EnvironmentManager {
         this.lightSourceDetector.detectLightSources(this.mapRenderer.renderer, this.equirectangularTexture);
         this.setMapPlaneTexture();
         this.setSceneEnvironment();
-        const discardedSamples = this.lightSourceDetector.sampleUVs.filter((uv) => !this.lightSourceDetector.lightSampleUVs.includes(uv));
-        this.debugDrawSamplePoints(discardedSamples, 0.005, 0xff0000);
-        this.debugDrawSamplePoints(this.lightSourceDetector.lightSampleUVs, 0.01, 0x00ff00);
+        const lightSampleUVs = this.lightSourceDetector.lightSamples.map((sample) => sample.uv);
+        const discardedSamples = this.lightSourceDetector.sampleUVs.filter((uv) => !lightSampleUVs.includes(uv));
+        this.createDebugSamplePoints(discardedSamples, 0.005, 0xff0000);
+        this.createDebugSamplePoints(lightSampleUVs, 0.01, 0x00ff00);
+        this.createDebugClusterLines(this.lightSourceDetector.lightSamples, this.lightSourceDetector.clusterSegments, 0x000080);
         
         const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
         directionalTestLight.position.set(1, 3, 1);
@@ -249,7 +254,7 @@ class EnvironmentManager {
     private removeDeprecatedObjectsFromScene(scene: Scene) {
         const deprecatedObjects: Object3D[] = []
         scene.traverse((object: Object3D) => {
-            if (object.name === 'samplePoint') {
+            if (['samplePoint', 'clusterLine'].includes(object.name)) {
                 deprecatedObjects.push(object);
             }
         });
@@ -267,18 +272,35 @@ class EnvironmentManager {
         oldLightSources.forEach((lightSource: Light) => lightSource.removeFromParent());
     }
 
-    private debugDrawSamplePoints(samplePoints: Vector2[], radius: number, color: ColorRepresentation) {
+    private createDebugSamplePoints(samplePoints: Vector2[], radius: number, color: ColorRepresentation) {
         // TODO TREE.Points https://threejs.org/docs/#api/en/objects/Points
         const samplePointGeometry = new CircleGeometry(radius, 8, 4);
         const samplePointMaterial = new MeshBasicMaterial({color: color});
         samplePoints.forEach((samplePoint: Vector2) => {
             const samplePointMesh = new Mesh(samplePointGeometry, samplePointMaterial);
-            samplePointMesh.position.x = samplePoint.x * 2 - 1;
-            samplePointMesh.position.y = samplePoint.y - 0.5;
-            samplePointMesh.position.z = 0;
+            samplePointMesh.position.copy(this.uvToMapPosition(samplePoint));
             samplePointMesh.name = 'samplePoint';
             this.mapRenderer.scene.add(samplePointMesh);
         });
+    }
+
+    private createDebugClusterLines(lightSamples: LightSample[], clusterSegments: number[][], color: ColorRepresentation) {
+        const lineMaterial = new LineBasicMaterial({color});
+        const points: Vector3[] = [];
+        clusterSegments.forEach((cluster: number[]) => {
+            for (let i = 1; i < cluster.length; i++) {
+                points.push(this.uvToMapPosition(lightSamples[cluster[0]].uv));
+                points.push(this.uvToMapPosition(lightSamples[cluster[i]].uv));
+            }
+        });
+        const lineGeometry = new BufferGeometry().setFromPoints(points);   
+        const lineMesh = new LineSegments(lineGeometry, lineMaterial);
+        lineMesh.name = 'clusterLine';
+        this.mapRenderer.scene.add(lineMesh);
+    }
+
+    private uvToMapPosition(uv: Vector2): Vector3 {
+        return new Vector3(uv.x * 2 - 1, uv.y - 0.5, 0);
     }
 }
 

@@ -139,13 +139,14 @@ export class LightSourceDetector {
     public detectorTexture: Texture = new Texture();
     public detectorArray: Float32Array = new Float32Array(0);
     private textureConverter?: TextureConverter;
-    public lightSampleUVs: Vector2[] = [];
+    public lightSamples: LightSample[] = [];
+    public clusterSegments: number[][] = [];
 
     constructor(parameters?: any) {
         this.numberOfSamples = parameters?.numberOfSamples ?? 1000;
         this.width = parameters?.width ?? 1024;
         this.height = parameters?.height ?? 512;
-        this.sampleThreshold = parameters?.sampleThreshold ?? 0.5;
+        this.sampleThreshold = parameters?.sampleThreshold ?? 0.707;
         this.samplePoints = this.createEquirectangularSamplePoints(this.numberOfSamples);
         this.sampleUVs = this.samplePoints.map((point) => sphereToEquirectangular(point));
     }
@@ -154,16 +155,11 @@ export class LightSourceDetector {
         this.textureConverter = this.textureConverter ?? new TextureConverter();
         this.grayscaleTexture = this.textureConverter.newGrayscaleTexture(
             renderer, equirectangularTexture, this.width, this.height);
-        this.detectorArray = this.redFromRgbaToNormalizedFloatArray(this.grayscaleTexture.pixels, 2);
+        this.detectorArray = this.redFromRgbaToNormalizedFloatArray(this.grayscaleTexture.pixels);
         this.detectorTexture = this.grayscaleTextureFromFloatArray(
             this.detectorArray, this.width, this.height);
-       this.lightSampleUVs =  this.sampleUVs.filter(uv => {
-            const column = Math.floor(uv.x * this.width);
-            const row = Math.floor(uv.y * this.height);
-            const index = row * this.width + column;
-            const value = this.detectorArray[index];
-            return value > this.sampleThreshold;
-        });
+        this.lightSamples = this.filterLightSamples(this.sampleThreshold);
+        this.clusterSegments = this.findClusterSegments(this.lightSamples, Math.PI / 16, this.sampleThreshold);
     }
 
     private createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
@@ -214,4 +210,118 @@ export class LightSourceDetector {
         dataTexture.needsUpdate = true;
         return dataTexture;
     }
+
+    private filterLightSamples(threshold: number): LightSample[] {
+        const lightSamples: LightSample[] = [];
+        for (let i = 0; i < this.sampleUVs.length; i++) {
+            const uv = this.sampleUVs[i];
+            const value = this.luminanceValueFromUV(uv);
+            if (value > threshold) {
+                lightSamples.push(new LightSample(this.samplePoints[i], uv));
+            }
+        }
+        return lightSamples;
+    }
+
+    private luminanceValueFromUV(uv: Vector2): number {
+        const column = Math.floor(uv.x * this.width);
+        const row = Math.floor(uv.y * this.height);
+        const index = row * this.width + column;
+        return this.detectorArray[index];
+    }
+
+    private findClusterSegments(samples: LightSample[], maxDistance: number, threshold: number): number[][] {
+        const clusterSegments: number[][] = [];
+        for (let i = 0; i < samples.length; i++) {
+            for (let j = i + 1; j < samples.length; j++) {
+                if (samples[i].position.angleTo(samples[j].position) < maxDistance) {
+                    const direction = samples[j].position.clone().sub(samples[i].position);
+                    const steps = Math.floor(direction.length() / (maxDistance / 10));
+                    let inTreshold = true;
+                    let outOfTresholdCount = 0
+                    for (let k = 1; k < steps; k++) {
+                        const step = direction.clone().multiplyScalar(k / steps);
+                        const uv = sphereToEquirectangular(samples[i].position.clone().add(step).normalize());
+                        const value = this.luminanceValueFromUV(uv);
+                        if (value < threshold) {
+                            outOfTresholdCount++;
+                            if (outOfTresholdCount > 1) {
+                                inTreshold = false;
+                                break;
+                            }
+                        } else {
+                            outOfTresholdCount = 0;
+                        }
+                    }
+                    if (inTreshold) {
+                        clusterSegments.push([i, j]);
+                    }
+                }
+            }
+        }
+        return clusterSegments;
+    };
 }
+
+export class LightSample {
+    public readonly position: Vector3;
+    public readonly uv: Vector2;
+
+    constructor(position: Vector3, uv: Vector2) {
+        this.position = position;
+        this.uv = uv;
+    }
+}
+
+const bresenhamCheck = (lum: Float32Array, width: number, x0: number, y0: number, x1: number, y1: number): boolean => {
+
+    let dX: number = Math.floor(x1 - x0);
+    let stepX: number = Math.sign(dX);
+    dX = Math.abs(dX) << 1;
+  
+    let dY: number = Math.floor(y1 - y0);
+    let stepY: number = Math.sign(dY);
+    dY = Math.abs(dY) << 1;
+  
+    const luminanceThreshold: number = 0.15;
+    let prevLum: number = lum[x0 + y0 * width];
+    let sumLum: number = 0.0;
+    let c: number = 0;
+  
+    if (dX >= dY) {
+      // delta may go below zero
+      let delta: number = Math.floor(dY - (dX >> 1));
+      while (x0 != x1) {
+        // reduce delta, while taking into account the corner case of delta == 0
+        if ((delta > 0) || (delta == 0 && (stepX > 0))) {
+          delta -= dX;
+          y0 += stepY;
+        }
+        delta += dY;
+        x0 += stepX;
+        sumLum = sumLum + Math.min(lum[x0 + y0 * width], 1.25);
+        c = c + 1;
+        if (Math.abs(sumLum / c - prevLum) > luminanceThreshold && (sumLum / c) < 1.0) {
+          return false;
+        }
+      }
+    } else {
+      // delta may go below zero
+      let delta: number = Math.floor(dX - (dY >> 1));
+      while (y0 != y1) {
+        // reduce delta, while taking into account the corner case of delta == 0
+        if ((delta > 0) || (delta == 0 && (stepY > 0))) {
+          delta -= dY;
+          x0 += stepX;
+        }
+        delta += dX;
+        y0 += stepY;
+        sumLum = sumLum + Math.min(lum[x0 + y0 * width], 1.25);
+        c = c + 1;
+        if (Math.abs(sumLum / c - prevLum) > luminanceThreshold && (sumLum / c) < 1.0) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
