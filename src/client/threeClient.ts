@@ -2,7 +2,8 @@ import { setupDragDrop } from './drag_target';
 import { loadEnvironmentTexture } from './environment'; 
 import { 
     createEquirectangularSamplePoints, 
-    sphereToEquirectangular 
+    sphereToEquirectangular ,
+    TextureConverter,
 } from './light_source_detection';
 import {
     AxesHelper,
@@ -45,6 +46,7 @@ export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas
     const stats = new Stats();
     document.body.appendChild(stats.dom);
     const gui = new GUI();
+    gui.add<any>(environmentManager, 'map', ['color', 'grayscale']).onChange(() => environmentManager.setMapPlaneTexture());
 
     const setEnvironmentMap = (texture: Texture) => {
         environmentManager.setEnvironmentMaoAndCreateLightSources(texture);
@@ -178,9 +180,16 @@ interface SceneRenderer {
 };
 
 class EnvironmentManager {
+    public detectorWidth: number = 1024;
+    public detectorHeight: number = 512;
+    public map: string = 'color';
     private mapRenderer: MapRenderer;
     private sceneRenderer: SceneRenderer;
     private pmremGenerator?: PMREMGenerator;
+    private textureConverter?: TextureConverter;
+    private equirectangularTexture: Texture = new Texture();
+    private grayscaleTexture: Texture = new Texture();
+
 
     constructor(mapRenderer: MapRenderer, sceneRenderer: SceneRenderer) {
         this.mapRenderer = mapRenderer;
@@ -188,10 +197,11 @@ class EnvironmentManager {
     }
 
     public setEnvironmentMaoAndCreateLightSources(equirectangularTexture: Texture) {
+        this.createTextures(equirectangularTexture);
         this.removeDeprecatedObjectsFromScene(this.mapRenderer.scene);
         this.removeLightSourcesFromScene(this.sceneRenderer.scene);
-        this.setMapPlaneTexture(equirectangularTexture);
-        this.setSceneEnvironment(equirectangularTexture);
+        this.setMapPlaneTexture();
+        this.setSceneEnvironment();
         
         const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
         directionalTestLight.position.set(1, 3, 1);
@@ -203,16 +213,31 @@ class EnvironmentManager {
         this.debugDrawSamplePoints(sampleUVs, 0x00ff00);
     }
 
-    public setSceneEnvironment(equirectangularTexture: Texture) {
+    private createTextures(equirectangularTexture: Texture) {
+        this.equirectangularTexture = equirectangularTexture;
+        this.textureConverter = this.textureConverter ?? new TextureConverter();
+        this.grayscaleTexture = this.textureConverter.newGrayscaleTexture(
+            this.mapRenderer.renderer, this.equirectangularTexture, this.detectorWidth, this.detectorHeight);
+    }
+
+    public setSceneEnvironment() {
         this.pmremGenerator = this.pmremGenerator ?? new PMREMGenerator(this.sceneRenderer.renderer);
-        const environmentTexture = this.pmremGenerator.fromEquirectangular(equirectangularTexture).texture;
+        const environmentTexture = this.pmremGenerator.fromEquirectangular(this.equirectangularTexture).texture;
         this.sceneRenderer.scene.environment = environmentTexture;
         this.sceneRenderer.scene.background = environmentTexture;
     }
 
-    public setMapPlaneTexture(texture: Texture) {
+    public setMapPlaneTexture() {
         if (this.mapRenderer.mapPlane.material instanceof MeshBasicMaterial) {
-            this.mapRenderer.mapPlane.material.map = texture;
+            switch (this.map) {
+                default:
+                case 'color':
+                    this.mapRenderer.mapPlane.material.map = this.equirectangularTexture;
+                    break;
+                case 'grayscale':
+                    this.mapRenderer.mapPlane.material.map = this.grayscaleTexture;
+                    break;
+            }
             this.mapRenderer.mapPlane.material.needsUpdate = true;
         }
     }
@@ -239,7 +264,8 @@ class EnvironmentManager {
     }
 
     private debugDrawSamplePoints(samplePoints: Vector2[], color: ColorRepresentation) {
-        const samplePointGeometry = new CircleGeometry(0.005, 32, 26);
+        // TODO TREE.Points https://threejs.org/docs/#api/en/objects/Points
+        const samplePointGeometry = new CircleGeometry(0.005, 8, 4);
         const samplePointMaterial = new MeshBasicMaterial({color: color});
         samplePoints.forEach((samplePoint: Vector2) => {
             const samplePointMesh = new Mesh(samplePointGeometry, samplePointMaterial);
