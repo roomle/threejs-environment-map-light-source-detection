@@ -4,11 +4,14 @@ import {
     AxesHelper,
     BoxGeometry,
     Color,
+    DirectionalLight,
     DoubleSide,
     GridHelper,
+    Light,
     Mesh,
     MeshBasicMaterial,
     MeshPhysicalMaterial,
+    Object3D,
     OrthographicCamera,
     PCFSoftShadowMap,
     PerspectiveCamera,
@@ -35,13 +38,10 @@ export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas
     document.body.appendChild(stats.dom);
     const gui = new GUI();
 
-    const pmremGenerator = new PMREMGenerator(sceneRenderer.renderer);
     const setEnvironmentMap = (texture: Texture) => {
         mapRenderer.mapPlane.material.map = texture;
         mapRenderer.mapPlane.material.needsUpdate = true;
-        const environmentTexture = pmremGenerator.fromEquirectangular(texture).texture;
-        sceneRenderer.scene.environment = environmentTexture;
-        sceneRenderer.scene.background = environmentTexture;
+        setEnvironmentMaoAndCreateLightSources(sceneRenderer.renderer, sceneRenderer.scene, texture);
     }
     loadEnvironmentTexture('blue_photo_studio_1k.hdr', './blue_photo_studio_1k.hdr', setEnvironmentMap);
     setupDragDrop('holder', 'hover', (file: File, event: ProgressEvent<FileReader>) => {
@@ -154,6 +154,28 @@ export const createSceneRendererAndScene = (map_canvas: any): any => {
         controls: controls,
         objectMesh: cubeMesh,
     };
+}
+
+let pmremGenerator: PMREMGenerator | undefined;
+const setEnvironmentMaoAndCreateLightSources = (renderer: WebGLRenderer, scene: Scene, equirectangularTexture: Texture) => {
+    pmremGenerator = pmremGenerator ?? new PMREMGenerator(renderer);
+    const environmentTexture = pmremGenerator.fromEquirectangular(equirectangularTexture).texture;
+    scene.environment = environmentTexture;
+    scene.background = environmentTexture;
+
+    const oldLightSources: Light[] = []
+    scene.traverse((object: Object3D) => {
+        // @ts-ignore
+        if (object.isLight) {
+            oldLightSources.push(object as Light);
+        }
+    });
+    oldLightSources.forEach((lightSource: Light) => lightSource.removeFromParent());
+
+    const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
+    directionalTestLight.position.set(1, 3, 1);
+    directionalTestLight.castShadow = true;
+    scene.add(directionalTestLight);
 }
 
 // @ts-ignore
