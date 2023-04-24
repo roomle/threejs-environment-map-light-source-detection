@@ -1,9 +1,12 @@
 import { setupDragDrop } from './drag_target';
 import { loadEnvironmentTexture } from './environment'; 
 import { 
-    createEquirectangularSamplePoints, 
-    sphereToEquirectangular ,
+    createEquirectangularSamplePoints,
+    grayscaleTextureFromFloatArray, 
+    redFromRgbaToNormalizedFloatArray,
+    sphereToEquirectangular,
     TextureConverter,
+    TextureConverterResult,
 } from './light_source_detection';
 import {
     AxesHelper,
@@ -46,7 +49,7 @@ export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas
     const stats = new Stats();
     document.body.appendChild(stats.dom);
     const gui = new GUI();
-    gui.add<any>(environmentManager, 'map', ['color', 'grayscale']).onChange(() => environmentManager.setMapPlaneTexture());
+    gui.add<any>(environmentManager, 'map', ['color', 'grayscale', 'detector']).onChange(() => environmentManager.setMapPlaneTexture());
 
     const setEnvironmentMap = (texture: Texture) => {
         environmentManager.setEnvironmentMaoAndCreateLightSources(texture);
@@ -180,16 +183,20 @@ interface SceneRenderer {
 };
 
 class EnvironmentManager {
-    public detectorWidth: number = 1024;
-    public detectorHeight: number = 512;
-    public map: string = 'color';
+    public map: string = 'detector';
+    private detectorWidth: number = 1024;
+    private detectorHeight: number = 512;
+    private detectorArray: Float32Array = new Float32Array(0);
     private mapRenderer: MapRenderer;
     private sceneRenderer: SceneRenderer;
     private pmremGenerator?: PMREMGenerator;
     private textureConverter?: TextureConverter;
     private equirectangularTexture: Texture = new Texture();
-    private grayscaleTexture: Texture = new Texture();
-
+    private grayscaleTexture: TextureConverterResult = { 
+        texture: new Texture(),
+        pixels: new Uint8Array(0),
+    };
+    private detectorTexture: Texture = new Texture();
 
     constructor(mapRenderer: MapRenderer, sceneRenderer: SceneRenderer) {
         this.mapRenderer = mapRenderer;
@@ -218,6 +225,9 @@ class EnvironmentManager {
         this.textureConverter = this.textureConverter ?? new TextureConverter();
         this.grayscaleTexture = this.textureConverter.newGrayscaleTexture(
             this.mapRenderer.renderer, this.equirectangularTexture, this.detectorWidth, this.detectorHeight);
+        this.detectorArray = redFromRgbaToNormalizedFloatArray(this.grayscaleTexture.pixels, 2);
+        this.detectorTexture = grayscaleTextureFromFloatArray(
+            this.detectorArray, this.detectorWidth, this.detectorHeight);
     }
 
     public setSceneEnvironment() {
@@ -235,7 +245,10 @@ class EnvironmentManager {
                     this.mapRenderer.mapPlane.material.map = this.equirectangularTexture;
                     break;
                 case 'grayscale':
-                    this.mapRenderer.mapPlane.material.map = this.grayscaleTexture;
+                    this.mapRenderer.mapPlane.material.map = this.grayscaleTexture.texture;
+                    break;
+                case 'detector':
+                    this.mapRenderer.mapPlane.material.map = this.detectorTexture;
                     break;
             }
             this.mapRenderer.mapPlane.material.needsUpdate = true;
