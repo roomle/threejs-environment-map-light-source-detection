@@ -1,9 +1,15 @@
 import { setupDragDrop } from './drag_target';
 import { loadEnvironmentTexture } from './environment'; 
+import { 
+    createEquirectangularSamplePoints, 
+    sphereToEquirectangular 
+} from './light_source_detection';
 import {
     AxesHelper,
     BoxGeometry,
+    CircleGeometry,
     Color,
+    ColorRepresentation,
     DirectionalLight,
     DoubleSide,
     GridHelper,
@@ -21,6 +27,7 @@ import {
     ShadowMaterial,
     sRGBEncoding,
     Texture,
+    Vector2,
     WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
@@ -32,6 +39,7 @@ import { GUI } from 'dat.gui'
 export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas: any) => {
     const mapRenderer = createMapRendererAndScene(map_canvas);
     const sceneRenderer = createSceneRendererAndScene(scene_canvas);
+    const environmentManager = new EnvironmentManager(mapRenderer, sceneRenderer);
 
     // @ts-ignore
     const stats = new Stats();
@@ -39,9 +47,7 @@ export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas
     const gui = new GUI();
 
     const setEnvironmentMap = (texture: Texture) => {
-        mapRenderer.mapPlane.material.map = texture;
-        mapRenderer.mapPlane.material.needsUpdate = true;
-        setEnvironmentMaoAndCreateLightSources(sceneRenderer.renderer, sceneRenderer.scene, texture);
+        environmentManager.setEnvironmentMaoAndCreateLightSources(texture);
     }
     loadEnvironmentTexture('blue_photo_studio_1k.hdr', './blue_photo_studio_1k.hdr', setEnvironmentMap);
     setupDragDrop('holder', 'hover', (file: File, event: ProgressEvent<FileReader>) => {
@@ -82,7 +88,7 @@ export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas
     requestAnimationFrame(animate);
 }
 
-export const createMapRendererAndScene = (map_canvas: any): any => {
+export const createMapRendererAndScene = (map_canvas: any): MapRenderer => {
     const mapRenderer = new WebGLRenderer({canvas: map_canvas, antialias: true, alpha: true});
     mapRenderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(mapRenderer.domElement);
@@ -115,7 +121,7 @@ export const createMapRendererAndScene = (map_canvas: any): any => {
     };
 }
 
-export const createSceneRendererAndScene = (map_canvas: any): any => {
+export const createSceneRendererAndScene = (map_canvas: any): SceneRenderer => {
     const sceneRenderer = new WebGLRenderer({canvas: map_canvas, antialias: true, alpha: true});
     document.body.appendChild(sceneRenderer.domElement);
     sceneRenderer.shadowMap.enabled = true;
@@ -156,26 +162,94 @@ export const createSceneRendererAndScene = (map_canvas: any): any => {
     };
 }
 
-let pmremGenerator: PMREMGenerator | undefined;
-const setEnvironmentMaoAndCreateLightSources = (renderer: WebGLRenderer, scene: Scene, equirectangularTexture: Texture) => {
-    pmremGenerator = pmremGenerator ?? new PMREMGenerator(renderer);
-    const environmentTexture = pmremGenerator.fromEquirectangular(equirectangularTexture).texture;
-    scene.environment = environmentTexture;
-    scene.background = environmentTexture;
+interface MapRenderer {
+    renderer: WebGLRenderer,
+    camera: OrthographicCamera,
+    scene: Scene,
+    mapPlane: Mesh,
+}
 
-    const oldLightSources: Light[] = []
-    scene.traverse((object: Object3D) => {
-        // @ts-ignore
-        if (object.isLight) {
-            oldLightSources.push(object as Light);
+interface SceneRenderer {
+    renderer: WebGLRenderer,
+    camera: PerspectiveCamera,
+    scene: Scene,
+    controls: OrbitControls,
+    objectMesh: Mesh,
+};
+
+class EnvironmentManager {
+    private mapRenderer: MapRenderer;
+    private sceneRenderer: SceneRenderer;
+    private pmremGenerator?: PMREMGenerator;
+
+    constructor(mapRenderer: MapRenderer, sceneRenderer: SceneRenderer) {
+        this.mapRenderer = mapRenderer;
+        this.sceneRenderer = sceneRenderer;
+    }
+
+    public setEnvironmentMaoAndCreateLightSources(equirectangularTexture: Texture) {
+        this.removeDeprecatedObjectsFromScene(this.mapRenderer.scene);
+        this.removeLightSourcesFromScene(this.sceneRenderer.scene);
+        this.setMapPlaneTexture(equirectangularTexture);
+        this.setSceneEnvironment(equirectangularTexture);
+        
+        const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
+        directionalTestLight.position.set(1, 3, 1);
+        directionalTestLight.castShadow = true;
+        this.sceneRenderer.scene.add(directionalTestLight);
+
+        const samplePoints = createEquirectangularSamplePoints(1000);
+        const sampleUVs = samplePoints.map((point) => sphereToEquirectangular(point));
+        this.debugDrawSamplePoints(sampleUVs, 0x00ff00);
+    }
+
+    public setSceneEnvironment(equirectangularTexture: Texture) {
+        this.pmremGenerator = this.pmremGenerator ?? new PMREMGenerator(this.sceneRenderer.renderer);
+        const environmentTexture = this.pmremGenerator.fromEquirectangular(equirectangularTexture).texture;
+        this.sceneRenderer.scene.environment = environmentTexture;
+        this.sceneRenderer.scene.background = environmentTexture;
+    }
+
+    public setMapPlaneTexture(texture: Texture) {
+        if (this.mapRenderer.mapPlane.material instanceof MeshBasicMaterial) {
+            this.mapRenderer.mapPlane.material.map = texture;
+            this.mapRenderer.mapPlane.material.needsUpdate = true;
         }
-    });
-    oldLightSources.forEach((lightSource: Light) => lightSource.removeFromParent());
+    }
 
-    const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
-    directionalTestLight.position.set(1, 3, 1);
-    directionalTestLight.castShadow = true;
-    scene.add(directionalTestLight);
+    private removeDeprecatedObjectsFromScene(scene: Scene) {
+        const deprecatedObjects: Object3D[] = []
+        scene.traverse((object: Object3D) => {
+            if (object.name === 'samplePoint') {
+                deprecatedObjects.push(object);
+            }
+        });
+        deprecatedObjects.forEach((item: Object3D) => item.removeFromParent());
+    }
+
+    private removeLightSourcesFromScene(scene: Scene) {
+        const oldLightSources: Light[] = []
+        scene.traverse((object: Object3D) => {
+            // @ts-ignore
+            if (object.isLight) {
+                oldLightSources.push(object as Light);
+            }
+        });
+        oldLightSources.forEach((lightSource: Light) => lightSource.removeFromParent());
+    }
+
+    private debugDrawSamplePoints(samplePoints: Vector2[], color: ColorRepresentation) {
+        const samplePointGeometry = new CircleGeometry(0.005, 32, 26);
+        const samplePointMaterial = new MeshBasicMaterial({color: color});
+        samplePoints.forEach((samplePoint: Vector2) => {
+            const samplePointMesh = new Mesh(samplePointGeometry, samplePointMaterial);
+            samplePointMesh.position.x = samplePoint.x * 2 - 1;
+            samplePointMesh.position.y = samplePoint.y - 0.5;
+            samplePointMesh.position.z = 0;
+            samplePointMesh.name = 'samplePoint';
+            this.mapRenderer.scene.add(samplePointMesh);
+        });
+    }
 }
 
 // @ts-ignore
