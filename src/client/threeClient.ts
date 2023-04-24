@@ -1,10 +1,7 @@
 import { setupDragDrop } from './drag_target';
 import { loadEnvironmentTexture } from './environment'; 
 import { 
-    createEquirectangularSamplePoints,
-    grayscaleTextureFromFloatArray, 
-    redFromRgbaToNormalizedFloatArray,
-    sphereToEquirectangular,
+    LightSourceDetector,
     TextureConverter,
     TextureConverterResult,
 } from './light_source_detection';
@@ -186,17 +183,21 @@ class EnvironmentManager {
     public map: string = 'detector';
     private detectorWidth: number = 1024;
     private detectorHeight: number = 512;
-    private detectorArray: Float32Array = new Float32Array(0);
     private mapRenderer: MapRenderer;
     private sceneRenderer: SceneRenderer;
     private pmremGenerator?: PMREMGenerator;
-    private textureConverter?: TextureConverter;
     private equirectangularTexture: Texture = new Texture();
-    private grayscaleTexture: TextureConverterResult = { 
-        texture: new Texture(),
-        pixels: new Uint8Array(0),
-    };
-    private detectorTexture: Texture = new Texture();
+    private _lightSourceDetector?: LightSourceDetector;
+
+    get lightSourceDetector(): LightSourceDetector {
+        this._lightSourceDetector = this._lightSourceDetector ?? new LightSourceDetector({
+            numberOfSamples: 1000,
+            width: this.detectorWidth,
+            height: this.detectorHeight,
+            sampleThreshold: 0.5,
+        });
+        return this._lightSourceDetector;
+    }
 
     constructor(mapRenderer: MapRenderer, sceneRenderer: SceneRenderer) {
         this.mapRenderer = mapRenderer;
@@ -204,30 +205,20 @@ class EnvironmentManager {
     }
 
     public setEnvironmentMaoAndCreateLightSources(equirectangularTexture: Texture) {
-        this.createTextures(equirectangularTexture);
         this.removeDeprecatedObjectsFromScene(this.mapRenderer.scene);
         this.removeLightSourcesFromScene(this.sceneRenderer.scene);
+        this.equirectangularTexture = equirectangularTexture;
+        this.lightSourceDetector.detectLightSources(this.mapRenderer.renderer, this.equirectangularTexture);
         this.setMapPlaneTexture();
         this.setSceneEnvironment();
+        const discardedSamples = this.lightSourceDetector.sampleUVs.filter((uv) => !this.lightSourceDetector.lightSampleUVs.includes(uv));
+        this.debugDrawSamplePoints(discardedSamples, 0.005, 0xff0000);
+        this.debugDrawSamplePoints(this.lightSourceDetector.lightSampleUVs, 0.01, 0x00ff00);
         
         const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
         directionalTestLight.position.set(1, 3, 1);
         directionalTestLight.castShadow = true;
         this.sceneRenderer.scene.add(directionalTestLight);
-
-        const samplePoints = createEquirectangularSamplePoints(1000);
-        const sampleUVs = samplePoints.map((point) => sphereToEquirectangular(point));
-        this.debugDrawSamplePoints(sampleUVs, 0x00ff00);
-    }
-
-    private createTextures(equirectangularTexture: Texture) {
-        this.equirectangularTexture = equirectangularTexture;
-        this.textureConverter = this.textureConverter ?? new TextureConverter();
-        this.grayscaleTexture = this.textureConverter.newGrayscaleTexture(
-            this.mapRenderer.renderer, this.equirectangularTexture, this.detectorWidth, this.detectorHeight);
-        this.detectorArray = redFromRgbaToNormalizedFloatArray(this.grayscaleTexture.pixels, 2);
-        this.detectorTexture = grayscaleTextureFromFloatArray(
-            this.detectorArray, this.detectorWidth, this.detectorHeight);
     }
 
     public setSceneEnvironment() {
@@ -245,10 +236,10 @@ class EnvironmentManager {
                     this.mapRenderer.mapPlane.material.map = this.equirectangularTexture;
                     break;
                 case 'grayscale':
-                    this.mapRenderer.mapPlane.material.map = this.grayscaleTexture.texture;
+                    this.mapRenderer.mapPlane.material.map = this.lightSourceDetector.grayscaleTexture.texture;
                     break;
                 case 'detector':
-                    this.mapRenderer.mapPlane.material.map = this.detectorTexture;
+                    this.mapRenderer.mapPlane.material.map = this.lightSourceDetector.detectorTexture;
                     break;
             }
             this.mapRenderer.mapPlane.material.needsUpdate = true;
@@ -276,9 +267,9 @@ class EnvironmentManager {
         oldLightSources.forEach((lightSource: Light) => lightSource.removeFromParent());
     }
 
-    private debugDrawSamplePoints(samplePoints: Vector2[], color: ColorRepresentation) {
+    private debugDrawSamplePoints(samplePoints: Vector2[], radius: number, color: ColorRepresentation) {
         // TODO TREE.Points https://threejs.org/docs/#api/en/objects/Points
-        const samplePointGeometry = new CircleGeometry(0.005, 8, 4);
+        const samplePointGeometry = new CircleGeometry(radius, 8, 4);
         const samplePointMaterial = new MeshBasicMaterial({color: color});
         samplePoints.forEach((samplePoint: Vector2) => {
             const samplePointMesh = new Mesh(samplePointGeometry, samplePointMaterial);

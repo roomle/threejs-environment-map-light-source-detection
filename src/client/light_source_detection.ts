@@ -13,19 +13,6 @@ import {
     WebGLRenderTarget,
 } from 'three';
 
-export const createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
-    const points: Vector3[] = [];
-    for (let i = 0; i < numberOfPoints; i++) {
-        const spiralAngle = i * Math.PI * (3 - Math.sqrt(5));
-        const z = 1 - (i / (numberOfPoints - 1)) * 2;
-        const radius = Math.sqrt(1 - z * z);
-        const x = Math.cos(spiralAngle) * radius;
-        const y = Math.sin(spiralAngle) * radius;
-        points.push(new Vector3(x, y, z));
-    }
-    return points;
-}
-
 export const sphereToEquirectangular = (pointOnSphere: Vector3): Vector2 => { 
     const u = Math.atan2(pointOnSphere.y, pointOnSphere.x) / (2 * Math.PI) + 0.5;
     const v = Math.asin(pointOnSphere.z) / Math.PI + 0.5;
@@ -138,37 +125,93 @@ export class GrayscaleShaderMaterial extends ShaderMaterial {
     }
 }
 
-export const redFromRgbaToNormalizedFloatArray = (rgba: Uint8Array, exponent?: number): Float32Array => {
-    const floatArray = new Float32Array(rgba.length / 4);
-    let maximumValue = 0;
-    for (let i=0; i < rgba.length / 4; ++i) {
-        const value = rgba[i * 4] / 255;
-        maximumValue = Math.max(maximumValue, value);
-        floatArray[i] = value;
+export class LightSourceDetector {
+    private numberOfSamples: number;
+    private width: number;
+    private height: number;
+    private sampleThreshold: number;
+    public readonly samplePoints: Vector3[] = [];
+    public readonly sampleUVs: Vector2[] = [];
+    public grayscaleTexture: TextureConverterResult = { 
+        texture: new Texture(),
+        pixels: new Uint8Array(0),
+    };
+    public detectorTexture: Texture = new Texture();
+    public detectorArray: Float32Array = new Float32Array(0);
+    private textureConverter?: TextureConverter;
+    public lightSampleUVs: Vector2[] = [];
+
+    constructor(parameters?: any) {
+        this.numberOfSamples = parameters?.numberOfSamples ?? 1000;
+        this.width = parameters?.width ?? 1024;
+        this.height = parameters?.height ?? 512;
+        this.sampleThreshold = parameters?.sampleThreshold ?? 0.5;
+        this.samplePoints = this.createEquirectangularSamplePoints(this.numberOfSamples);
+        this.sampleUVs = this.samplePoints.map((point) => sphereToEquirectangular(point));
     }
-    if (exponent) {
-        for (let i=0; i < floatArray.length; ++i) {
-            const normalizedValue = floatArray[i] / maximumValue;
-            floatArray[i] = Math.pow(normalizedValue, exponent);
+
+    public detectLightSources(renderer: WebGLRenderer, equirectangularTexture: Texture) {
+        this.textureConverter = this.textureConverter ?? new TextureConverter();
+        this.grayscaleTexture = this.textureConverter.newGrayscaleTexture(
+            renderer, equirectangularTexture, this.width, this.height);
+        this.detectorArray = this.redFromRgbaToNormalizedFloatArray(this.grayscaleTexture.pixels, 2);
+        this.detectorTexture = this.grayscaleTextureFromFloatArray(
+            this.detectorArray, this.width, this.height);
+       this.lightSampleUVs =  this.sampleUVs.filter(uv => {
+            const column = Math.floor(uv.x * this.width);
+            const row = Math.floor(uv.y * this.height);
+            const index = row * this.width + column;
+            const value = this.detectorArray[index];
+            return value > this.sampleThreshold;
+        });
+    }
+
+    private createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
+        const points: Vector3[] = [];
+        for (let i = 0; i < numberOfPoints; i++) {
+            const spiralAngle = i * Math.PI * (3 - Math.sqrt(5));
+            const z = 1 - (i / (numberOfPoints - 1)) * 2;
+            const radius = Math.sqrt(1 - z * z);
+            const x = Math.cos(spiralAngle) * radius;
+            const y = Math.sin(spiralAngle) * radius;
+            points.push(new Vector3(x, y, z));
         }
-    } else {
-        for (let i=0; i < floatArray.length; ++i) {
-            floatArray[i] /= maximumValue;
+        return points;
+    }
+
+    private redFromRgbaToNormalizedFloatArray(rgba: Uint8Array, exponent?: number): Float32Array {
+        const floatArray = new Float32Array(rgba.length / 4);
+        let maximumValue = 0;
+        for (let i=0; i < rgba.length / 4; ++i) {
+            const value = rgba[i * 4] / 255;
+            maximumValue = Math.max(maximumValue, value);
+            floatArray[i] = value;
         }
+        if (exponent) {
+            for (let i=0; i < floatArray.length; ++i) {
+                const normalizedValue = floatArray[i] / maximumValue;
+                floatArray[i] = Math.pow(normalizedValue, exponent);
+            }
+        } else {
+            for (let i=0; i < floatArray.length; ++i) {
+                floatArray[i] /= maximumValue;
+            }
+        }
+        return floatArray;
     }
-    return floatArray;
-}
-export const grayscaleTextureFromFloatArray = (floatArray: Float32Array, width: number, height: number): Texture => {
-    const noOfPixels = width * height;
-    const uint8data = new Uint8Array(4 * noOfPixels);
-    for (let i = 0; i < noOfPixels; i ++) {
-        const grayscale = floatArray[i] * 255;
-        uint8data[i * 4 + 0] = grayscale;
-        uint8data[i * 4 + 1] = grayscale;
-        uint8data[i * 4 + 2] = grayscale;
-        uint8data[i * 4 + 3] = 255;
+
+    private grayscaleTextureFromFloatArray(floatArray: Float32Array, width: number, height: number): Texture {
+        const noOfPixels = width * height;
+        const uint8data = new Uint8Array(4 * noOfPixels);
+        for (let i = 0; i < noOfPixels; i ++) {
+            const grayscale = floatArray[i] * 255;
+            uint8data[i * 4 + 0] = grayscale;
+            uint8data[i * 4 + 1] = grayscale;
+            uint8data[i * 4 + 2] = grayscale;
+            uint8data[i * 4 + 3] = 255;
+        }
+        const dataTexture = new DataTexture(uint8data, width, height);
+        dataTexture.needsUpdate = true;
+        return dataTexture;
     }
-    const dataTexture = new DataTexture(uint8data, width, height);
-    dataTexture.needsUpdate = true;
-    return dataTexture;
 }
