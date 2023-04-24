@@ -194,7 +194,7 @@ class EnvironmentManager {
 
     get lightSourceDetector(): LightSourceDetector {
         this._lightSourceDetector = this._lightSourceDetector ?? new LightSourceDetector({
-            numberOfSamples: 2000,
+            numberOfSamples: 1500,
             width: this.detectorWidth,
             height: this.detectorHeight,
             sampleThreshold: 0.9,
@@ -289,8 +289,16 @@ class EnvironmentManager {
         const points: Vector3[] = [];
         clusterSegments.forEach((cluster: number[]) => {
             for (let i = 1; i < cluster.length; i++) {
-                points.push(this.uvToMapPosition(lightSamples[cluster[0]].uv));
-                points.push(this.uvToMapPosition(lightSamples[cluster[i]].uv));
+                const uv0 = lightSamples[cluster[0]].uv;
+                const uv1 = lightSamples[cluster[i]].uv;
+                points.push(this.uvToMapPosition(uv0));
+                if (Math.abs(uv0.x - uv1.x) > 0.5) {
+                    const v = (uv0.y + uv1.y) / 2;
+                    const u = uv0.x < uv1.x ? 0 : 1;
+                    points.push(this.uvToMapPosition(new Vector2(u, v)));
+                    points.push(this.uvToMapPosition(new Vector2(1 - u, v)));
+                }
+                points.push(this.uvToMapPosition(uv1));
             }
         });
         const lineGeometry = new BufferGeometry().setFromPoints(points);   

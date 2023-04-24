@@ -159,7 +159,7 @@ export class LightSourceDetector {
         this.detectorTexture = this.grayscaleTextureFromFloatArray(
             this.detectorArray, this.width, this.height);
         this.lightSamples = this.filterLightSamples(this.sampleThreshold);
-        this.clusterSegments = this.findClusterSegments(this.lightSamples, Math.PI / 16, this.sampleThreshold);
+        this.clusterSegments = this.findClusterSegments(this.lightSamples, this.sampleThreshold);
     }
 
     private createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
@@ -177,20 +177,22 @@ export class LightSourceDetector {
 
     private redFromRgbaToNormalizedFloatArray(rgba: Uint8Array, exponent?: number): Float32Array {
         const floatArray = new Float32Array(rgba.length / 4);
+        let minimumValue = 1;
         let maximumValue = 0;
         for (let i=0; i < rgba.length / 4; ++i) {
             const value = rgba[i * 4] / 255;
+            minimumValue = Math.min(minimumValue, value);
             maximumValue = Math.max(maximumValue, value);
             floatArray[i] = value;
         }
         if (exponent) {
             for (let i=0; i < floatArray.length; ++i) {
-                const normalizedValue = floatArray[i] / maximumValue;
+                const normalizedValue = (floatArray[i] - minimumValue) / (maximumValue - minimumValue);
                 floatArray[i] = Math.pow(normalizedValue, exponent);
             }
         } else {
             for (let i=0; i < floatArray.length; ++i) {
-                floatArray[i] /= maximumValue;
+                floatArray[i] = (floatArray[i] - minimumValue) / (maximumValue - minimumValue);
             }
         }
         return floatArray;
@@ -230,13 +232,17 @@ export class LightSourceDetector {
         return this.detectorArray[index];
     }
 
-    private findClusterSegments(samples: LightSample[], maxDistance: number, threshold: number): number[][] {
+    private findClusterSegments(samples: LightSample[], threshold: number): number[][] {
+        const pointDistance = Math.sqrt(4 * Math.PI) / Math.sqrt(this.numberOfSamples);
+        const pixelDistance = Math.sqrt(2) * Math.PI * 2 / this.width;
+        const stepDistance = pixelDistance * 2;
+        const maxDistance = pointDistance * 1.5;
         const clusterSegments: number[][] = [];
         for (let i = 0; i < samples.length; i++) {
             for (let j = i + 1; j < samples.length; j++) {
                 if (samples[i].position.angleTo(samples[j].position) < maxDistance) {
                     const direction = samples[j].position.clone().sub(samples[i].position);
-                    const steps = Math.floor(direction.length() / (maxDistance / 10));
+                    const steps = Math.floor(direction.length() / stepDistance);
                     let inTreshold = true;
                     let outOfTresholdCount = 0
                     for (let k = 1; k < steps; k++) {
