@@ -2,6 +2,8 @@
 
 Detection of light sources in environment maps
 
+[PoC - threejs environment map light source detection](https://roomle.github.io/threejs-environment-map-light-source-detection/poc/)
+
 ## Resources
 
 - [Detection of light sources](http://alinloghin.com/articles/env_lights.html)

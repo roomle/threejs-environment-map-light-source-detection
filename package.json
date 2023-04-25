@@ -10,14 +10,15 @@
     "build:server": "tsc -p ./src/server",
     "build": "npm run build:client && npm run build:server",
     "dev": "webpack serve --config ./src/client/webpack.dev.js",
-    "start": "node ./dist/server/threeServer.js"
+    "start": "node ./dist/server/threeServer.js",
+    "copy:poc": "npm run build && copyfiles --flat ./dist/client/*.js ./poc"
   },
   "author": "Rabbid76",
   "license": "ISC",
   "devDependencies": {
     "@types/dat.gui": "^0.7.9",
     "@types/express": "^4.17.17",
-    "@types/node": "^18.15.13",
+    "@types/node": "^18.16.0",
     "@types/three": "^0.150.2",
     "copyfiles": "^2.4.1",
     "dat.gui": "^0.7.9",
@@ -26,7 +27,7 @@
     "ts-loader": "^9.4.2",
     "typescript": "^5.0.4",
     "webpack": "^5.80.0",
-    "webpack-cli": "^5.0.1",
+    "webpack-cli": "^5.0.2",
     "webpack-dev-server": "^4.13.3",
     "webpack-merge": "^5.8.0"
   },
