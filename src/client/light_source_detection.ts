@@ -130,6 +130,8 @@ export class LightSourceDetector {
     private width: number;
     private height: number;
     private sampleThreshold: number;
+    public readonly pointDistance: number;
+    public readonly pixelDistance: number;
     public readonly samplePoints: Vector3[] = [];
     public readonly sampleUVs: Vector2[] = [];
     public grayscaleTexture: TextureConverterResult = { 
@@ -148,6 +150,8 @@ export class LightSourceDetector {
         this.width = parameters?.width ?? 1024;
         this.height = parameters?.height ?? 512;
         this.sampleThreshold = parameters?.sampleThreshold ?? 0.707;
+        this.pointDistance = Math.sqrt(4 * Math.PI) / Math.sqrt(this.numberOfSamples);
+        this.pixelDistance = Math.sqrt(2) * Math.PI * 2 / this.width;
         this.samplePoints = this.createEquirectangularSamplePoints(this.numberOfSamples);
         this.sampleUVs = this.samplePoints.map((point) => sphereToEquirectangular(point));
     }
@@ -163,6 +167,7 @@ export class LightSourceDetector {
         this.lightGraph = this.findClusterSegments(this.lightSamples, this.sampleThreshold);
         this.lightGraph.findConnectedComponents()
         this.lightSources = this.createLightSourcesFromLightGraph(this.lightSamples, this.lightGraph);
+        this.lightSources.sort((a, b) => b.intensity - a.intensity);
     }
 
     private createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
@@ -236,10 +241,8 @@ export class LightSourceDetector {
     }
 
     private findClusterSegments(samples: LightSample[], threshold: number): LightGraph {
-        const pointDistance = Math.sqrt(4 * Math.PI) / Math.sqrt(this.numberOfSamples);
-        const pixelDistance = Math.sqrt(2) * Math.PI * 2 / this.width;
-        const stepDistance = pixelDistance * 2;
-        const maxDistance = pointDistance * 1.5;
+        const stepDistance = this.pixelDistance * 2;
+        const maxDistance = this.pointDistance * 1.5;
         const lightGraph = new LightGraph(samples.length);
         for (let i = 0; i < samples.length; i++) {
             for (let j = i + 1; j < samples.length; j++) {
@@ -276,7 +279,8 @@ export class LightSourceDetector {
     private createLightSourcesFromLightGraph(samples: LightSample[], lightGraph: LightGraph): LightSource[] {
         const lightSources: LightSource[] = lightGraph.components.filter(component => component.length > 1).map(
             component => new LightSource(component.map(index => samples[index])));
-        lightSources.forEach(lightSource => lightSource.calculateLightSourceProperties());
+        lightSources.forEach(lightSource =>
+             lightSource.calculateLightSourceProperties((uv) => this.luminanceValueFromUV(uv)));
         return lightSources;
     }
 }
@@ -332,15 +336,18 @@ export class LightSource {
     public readonly lightSamples: LightSample[];
     public position: Vector3 = new Vector3();
     public uv: Vector2 = new Vector2();
+    public intensity: number = 0;
 
     constructor(lightSamples: LightSample[]) {
         this.lightSamples = lightSamples;
     }
 
-    public calculateLightSourceProperties() {
+    public calculateLightSourceProperties(luminanceFunction: (uv: Vector2) => number) {
         this.position = new Vector3();
+        this.intensity = 0;
         for (const lightSample of this.lightSamples) {
             this.position.add(lightSample.position);
+            this.intensity += luminanceFunction(lightSample.uv);
         }
         this.position.normalize();
         this.uv = sphereToEquirectangular(this.position);

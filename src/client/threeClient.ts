@@ -3,19 +3,19 @@ import { loadEnvironmentTexture } from './environment';
 import {
     LightGraph,
     LightSample,
+    LightSource,
     LightSourceDetector,
 } from './light_source_detection';
 import {
     AxesHelper,
-    BoxGeometry,
     BufferGeometry,
     CircleGeometry,
     Color,
     ColorRepresentation,
     DirectionalLight,
+    DirectionalLightHelper,
     DoubleSide,
     GridHelper,
-    Light,
     LineBasicMaterial,
     LineSegments,
     Mesh,
@@ -29,6 +29,7 @@ import {
     PMREMGenerator,
     Scene,
     ShadowMaterial,
+    SphereGeometry,
     sRGBEncoding,
     Texture,
     Vector2,
@@ -144,27 +145,32 @@ export const createSceneRendererAndScene = (map_canvas: any): SceneRenderer => {
     const scene = new Scene();
     scene.background = new Color(0xc0c0c0);
 
+    const groundLevel = 0;
+    const objectGeometry = new SphereGeometry(1, 32, 16);
+    const objectMaterial = new MeshPhysicalMaterial({color: 0x808080});
+    const objectMesh = new Mesh(objectGeometry, objectMaterial);
+    objectMesh.position.y = groundLevel + 1;
+    objectMesh.castShadow = true;
+    objectMesh.receiveShadow = true;
+    scene.add(objectMesh);
+
     const groundGeometry = new PlaneGeometry(10, 10);
     groundGeometry.rotateX(-Math.PI / 2);
     const groundMaterial = new ShadowMaterial();
+    groundMaterial.transparent = true;
+    groundMaterial.opacity = 0.5;
     const groundMesh = new Mesh(groundGeometry, groundMaterial);
     groundMesh.receiveShadow = true;
-    groundMesh.position.y = -0.5;
+    groundMesh.position.y = groundLevel;
     scene.add(groundMesh);
-
-    const cubeGeometry = new BoxGeometry(1, 1, 1);
-    const cubeMaterial = new MeshPhysicalMaterial({color: 0xe02020});
-    const cubeMesh = new Mesh(cubeGeometry, cubeMaterial);
-    cubeMesh.castShadow = true;
-    cubeMesh.receiveShadow = true;
-    scene.add(cubeMesh);
 
     return {
         renderer: sceneRenderer,
         camera: camera,
         scene: scene,
         controls: controls,
-        objectMesh: cubeMesh,
+        objectMesh: objectMesh,
+        groundLevel,
     };
 }
 
@@ -181,12 +187,17 @@ interface SceneRenderer {
     scene: Scene,
     controls: OrbitControls,
     objectMesh: Mesh,
+    groundLevel: number,
 };
 
 class EnvironmentManager {
     public map: string = 'detector';
     private detectorWidth: number = 1024;
     private detectorHeight: number = 512;
+    private sampleThreshold: number = 0.9;
+    private noOfSamples: number = 1500;
+    private lightIntensityThreshold: number = 0.2;
+    private lightDistanceScale: number = 5.0;
     private mapRenderer: MapRenderer;
     private sceneRenderer: SceneRenderer;
     private pmremGenerator?: PMREMGenerator;
@@ -195,10 +206,10 @@ class EnvironmentManager {
 
     get lightSourceDetector(): LightSourceDetector {
         this._lightSourceDetector = this._lightSourceDetector ?? new LightSourceDetector({
-            numberOfSamples: 1500,
+            numberOfSamples: this.noOfSamples,
             width: this.detectorWidth,
             height: this.detectorHeight,
-            sampleThreshold: 0.9,
+            sampleThreshold: this.sampleThreshold,
         });
         return this._lightSourceDetector;
     }
@@ -216,32 +227,7 @@ class EnvironmentManager {
         this.setMapPlaneTexture();
         this.setSceneEnvironment();
         this.createLightGraphInMap(this.lightSourceDetector.sampleUVs, this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph);
-        
-        const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
-        directionalTestLight.position.set(1, 3, 1);
-        directionalTestLight.castShadow = true;
-        this.sceneRenderer.scene.add(directionalTestLight);
-    }
-
-    private createLightGraphInMap(allLightSamplesUVs: Vector2[], lightSamples: LightSample[], lightGraph: LightGraph) {
-        let singleLightSamples: LightSample[] = [];
-        let clusterLightSamples: LightSample[] = [];
-        for (let i=0; i < this.lightSourceDetector.lightGraph.noOfNodes; ++i) {
-            if (lightGraph.adjacent[i].length === 0) {
-                singleLightSamples.push(lightSamples[i]);
-            } else {
-                clusterLightSamples.push(lightSamples[i]);
-            }
-        }
-        const singleLightSampleUVs = singleLightSamples.map((sample) => sample.uv);
-        const clusterLightSampleUVs = clusterLightSamples.map((sample) => sample.uv);
-        const discardedSamples = allLightSamplesUVs.filter((uv) => !singleLightSampleUVs.includes(uv) && !clusterLightSampleUVs.includes(uv));
-        this.createSamplePointsInMap(discardedSamples, 0.005, 0xff0000);
-        this.createSamplePointsInMap(singleLightSampleUVs, 0.01, 0x0000ff);
-        this.createSamplePointsInMap(clusterLightSampleUVs, 0.01, 0x00ff00);
-        this.createClusterLinesInMap(this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph.edges, 0x000080);
-        const lightSourceUVs = this.lightSourceDetector.lightSources.map((lightSource) => lightSource.uv);
-        this.createSamplePointsInMap(lightSourceUVs, 0.015, 0xffff00);
+        this.createLightSources(this.lightSourceDetector.lightSources);
     }
 
     public setSceneEnvironment() {
@@ -280,14 +266,55 @@ class EnvironmentManager {
     }
 
     private removeLightSourcesFromScene(scene: Scene) {
-        const oldLightSources: Light[] = []
+        const lightObject: Object3D[] = []
         scene.traverse((object: Object3D) => {
             // @ts-ignore
-            if (object.isLight) {
-                oldLightSources.push(object as Light);
+            if (object.isLight || ['lightHelper'].includes(object.name)) {
+                lightObject.push(object);
             }
         });
-        oldLightSources.forEach((lightSource: Light) => lightSource.removeFromParent());
+        lightObject.forEach((item: Object3D) => item.removeFromParent());
+    }
+
+    private createLightSources(lightSources: LightSource[]) {
+        const lightIntensityScale = lightSources.length > 0 ? 1 / lightSources[0].lightSamples.length : 1;
+        for (let i=0; i < lightSources.length; ++i) {
+            const lightSource = lightSources[i];
+            const lightIntensity = lightSource.intensity * lightIntensityScale;
+            if (lightIntensity < this.lightIntensityThreshold) {
+                continue;
+            }
+            const lightPosition = new Vector3(lightSource.position.x, lightSource.position.z, lightSource.position.y).multiplyScalar(this.lightDistanceScale);
+            const directionalLight = new DirectionalLight(0xffffff, lightIntensity);
+            directionalLight.position.copy(lightPosition);
+            directionalLight.lookAt(new Vector3(0, 0, 0));
+            directionalLight.castShadow = true;
+            this.sceneRenderer.scene.add(directionalLight);
+            const lightHelper = new DirectionalLightHelper(directionalLight, lightIntensity);
+            lightHelper.name = 'lightHelper';
+            this.sceneRenderer.scene.add(lightHelper);
+        }
+    }
+
+    private createLightGraphInMap(allLightSamplesUVs: Vector2[], lightSamples: LightSample[], lightGraph: LightGraph) {
+        let singleLightSamples: LightSample[] = [];
+        let clusterLightSamples: LightSample[] = [];
+        for (let i=0; i < this.lightSourceDetector.lightGraph.noOfNodes; ++i) {
+            if (lightGraph.adjacent[i].length === 0) {
+                singleLightSamples.push(lightSamples[i]);
+            } else {
+                clusterLightSamples.push(lightSamples[i]);
+            }
+        }
+        const singleLightSampleUVs = singleLightSamples.map((sample) => sample.uv);
+        const clusterLightSampleUVs = clusterLightSamples.map((sample) => sample.uv);
+        const discardedSamples = allLightSamplesUVs.filter((uv) => !singleLightSampleUVs.includes(uv) && !clusterLightSampleUVs.includes(uv));
+        this.createSamplePointsInMap(discardedSamples, 0.005, 0xff0000);
+        this.createSamplePointsInMap(singleLightSampleUVs, 0.01, 0x0000ff);
+        this.createSamplePointsInMap(clusterLightSampleUVs, 0.01, 0x00ff00);
+        this.createClusterLinesInMap(this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph.edges, 0x000080);
+        const lightSourceUVs = this.lightSourceDetector.lightSources.map((lightSource) => lightSource.uv);
+        this.createSamplePointsInMap(lightSourceUVs, 0.015, 0xffff00);
     }
 
     private createSamplePointsInMap(samplePoints: Vector2[], radius: number, color: ColorRepresentation) {
