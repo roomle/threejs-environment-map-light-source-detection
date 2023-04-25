@@ -141,6 +141,7 @@ export class LightSourceDetector {
     private textureConverter?: TextureConverter;
     public lightSamples: LightSample[] = [];
     public lightGraph: LightGraph = new LightGraph(0);
+    public lightSources: LightSource[] = [];
 
     constructor(parameters?: any) {
         this.numberOfSamples = parameters?.numberOfSamples ?? 1000;
@@ -161,7 +162,7 @@ export class LightSourceDetector {
         this.lightSamples = this.filterLightSamples(this.sampleThreshold);
         this.lightGraph = this.findClusterSegments(this.lightSamples, this.sampleThreshold);
         this.lightGraph.findConnectedComponents()
-        console.log(this.lightGraph.components);
+        this.lightSources = this.createLightSourcesFromLightGraph(this.lightSamples, this.lightGraph);
     }
 
     private createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
@@ -271,6 +272,23 @@ export class LightSourceDetector {
         }
         return lightGraph;
     };
+
+    private createLightSourcesFromLightGraph(samples: LightSample[], lightGraph: LightGraph): LightSource[] {
+        const lightSources: LightSource[] = lightGraph.components.filter(component => component.length > 1).map(
+            component => new LightSource(component.map(index => samples[index])));
+        lightSources.forEach(lightSource => lightSource.calculateLightSourceProperties());
+        return lightSources;
+    }
+}
+
+export class LightSample {
+    public readonly position: Vector3;
+    public readonly uv: Vector2;
+
+    constructor(position: Vector3, uv: Vector2) {
+        this.position = position;
+        this.uv = uv;
+    }
 }
 
 export class LightGraph {
@@ -310,13 +328,22 @@ export class LightGraph {
     }
 }
 
-export class LightSample {
-    public readonly position: Vector3;
-    public readonly uv: Vector2;
+export class LightSource {
+    public readonly lightSamples: LightSample[];
+    public position: Vector3 = new Vector3();
+    public uv: Vector2 = new Vector2();
 
-    constructor(position: Vector3, uv: Vector2) {
-        this.position = position;
-        this.uv = uv;
+    constructor(lightSamples: LightSample[]) {
+        this.lightSamples = lightSamples;
+    }
+
+    public calculateLightSourceProperties() {
+        this.position = new Vector3();
+        for (const lightSample of this.lightSamples) {
+            this.position.add(lightSample.position);
+        }
+        this.position.normalize();
+        this.uv = sphereToEquirectangular(this.position);
     }
 }
 

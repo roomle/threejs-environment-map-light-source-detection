@@ -240,6 +240,8 @@ class EnvironmentManager {
         this.createSamplePointsInMap(singleLightSampleUVs, 0.01, 0x0000ff);
         this.createSamplePointsInMap(clusterLightSampleUVs, 0.01, 0x00ff00);
         this.createClusterLinesInMap(this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph.edges, 0x000080);
+        const lightSourceUVs = this.lightSourceDetector.lightSources.map((lightSource) => lightSource.uv);
+        this.createSamplePointsInMap(lightSourceUVs, 0.015, 0xffff00);
     }
 
     public setSceneEnvironment() {
