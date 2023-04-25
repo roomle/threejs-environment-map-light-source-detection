@@ -140,7 +140,7 @@ export class LightSourceDetector {
     public detectorArray: Float32Array = new Float32Array(0);
     private textureConverter?: TextureConverter;
     public lightSamples: LightSample[] = [];
-    public clusterSegments: number[][] = [];
+    public lightGraph: LightGraph = new LightGraph(0);
 
     constructor(parameters?: any) {
         this.numberOfSamples = parameters?.numberOfSamples ?? 1000;
@@ -159,7 +159,9 @@ export class LightSourceDetector {
         this.detectorTexture = this.grayscaleTextureFromFloatArray(
             this.detectorArray, this.width, this.height);
         this.lightSamples = this.filterLightSamples(this.sampleThreshold);
-        this.clusterSegments = this.findClusterSegments(this.lightSamples, this.sampleThreshold);
+        this.lightGraph = this.findClusterSegments(this.lightSamples, this.sampleThreshold);
+        this.lightGraph.findConnectedComponents()
+        console.log(this.lightGraph.components);
     }
 
     private createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
@@ -232,12 +234,12 @@ export class LightSourceDetector {
         return this.detectorArray[index];
     }
 
-    private findClusterSegments(samples: LightSample[], threshold: number): number[][] {
+    private findClusterSegments(samples: LightSample[], threshold: number): LightGraph {
         const pointDistance = Math.sqrt(4 * Math.PI) / Math.sqrt(this.numberOfSamples);
         const pixelDistance = Math.sqrt(2) * Math.PI * 2 / this.width;
         const stepDistance = pixelDistance * 2;
         const maxDistance = pointDistance * 1.5;
-        const clusterSegments: number[][] = [];
+        const lightGraph = new LightGraph(samples.length);
         for (let i = 0; i < samples.length; i++) {
             for (let j = i + 1; j < samples.length; j++) {
                 if (samples[i].position.angleTo(samples[j].position) < maxDistance) {
@@ -260,13 +262,52 @@ export class LightSourceDetector {
                         }
                     }
                     if (inTreshold) {
-                        clusterSegments.push([i, j]);
+                        lightGraph.adjacent[i].push(j);
+                        lightGraph.adjacent[j].push(i);
+                        lightGraph.edges.push([i, j]);
                     }
                 }
             }
         }
-        return clusterSegments;
+        return lightGraph;
     };
+}
+
+export class LightGraph {
+    public readonly noOfNodes: number;
+    public edges: number[][] = [];
+    public adjacent: number[][] = [];
+    public components: number[][] = [];
+    
+    constructor(noOfNodes: number) {
+        this.noOfNodes = noOfNodes;
+        for (let i = 0; i < noOfNodes; i++) {
+            this.adjacent.push([]);
+        }
+    }
+
+    public findConnectedComponents() {
+        const visited = new Array(this.noOfNodes).fill(false);
+        this.components = [];
+        for (let i = 0; i < this.noOfNodes; i++) {
+            if (!visited[i]) {
+                const component: number[] = [];
+                this.dfs(i, visited, component);
+                this.components.push(component);
+            }
+        }
+        this.components.sort((a, b) => b.length - a.length);
+    }
+
+    private dfs(node: number, visited: boolean[], component: number[]) {
+        visited[node] = true;
+        component.push(node);
+        for (const adjacentNode of this.adjacent[node]) {
+            if (!visited[adjacentNode]) {
+                this.dfs(adjacentNode, visited, component);
+            }
+        }
+    }
 }
 
 export class LightSample {

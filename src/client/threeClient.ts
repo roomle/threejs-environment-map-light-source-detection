@@ -1,6 +1,7 @@
 import { setupDragDrop } from './drag_target';
 import { loadEnvironmentTexture } from './environment'; 
 import {
+    LightGraph,
     LightSample,
     LightSourceDetector,
 } from './light_source_detection';
@@ -214,16 +215,31 @@ class EnvironmentManager {
         this.lightSourceDetector.detectLightSources(this.mapRenderer.renderer, this.equirectangularTexture);
         this.setMapPlaneTexture();
         this.setSceneEnvironment();
-        const lightSampleUVs = this.lightSourceDetector.lightSamples.map((sample) => sample.uv);
-        const discardedSamples = this.lightSourceDetector.sampleUVs.filter((uv) => !lightSampleUVs.includes(uv));
-        this.createDebugSamplePoints(discardedSamples, 0.005, 0xff0000);
-        this.createDebugSamplePoints(lightSampleUVs, 0.01, 0x00ff00);
-        this.createDebugClusterLines(this.lightSourceDetector.lightSamples, this.lightSourceDetector.clusterSegments, 0x000080);
+        this.createLightGraphInMap(this.lightSourceDetector.sampleUVs, this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph);
         
         const directionalTestLight = new DirectionalLight(0xffffff, 0.5);
         directionalTestLight.position.set(1, 3, 1);
         directionalTestLight.castShadow = true;
         this.sceneRenderer.scene.add(directionalTestLight);
+    }
+
+    private createLightGraphInMap(allLightSamplesUVs: Vector2[], lightSamples: LightSample[], lightGraph: LightGraph) {
+        let singleLightSamples: LightSample[] = [];
+        let clusterLightSamples: LightSample[] = [];
+        for (let i=0; i < this.lightSourceDetector.lightGraph.noOfNodes; ++i) {
+            if (lightGraph.adjacent[i].length === 0) {
+                singleLightSamples.push(lightSamples[i]);
+            } else {
+                clusterLightSamples.push(lightSamples[i]);
+            }
+        }
+        const singleLightSampleUVs = singleLightSamples.map((sample) => sample.uv);
+        const clusterLightSampleUVs = clusterLightSamples.map((sample) => sample.uv);
+        const discardedSamples = allLightSamplesUVs.filter((uv) => !singleLightSampleUVs.includes(uv) && !clusterLightSampleUVs.includes(uv));
+        this.createSamplePointsInMap(discardedSamples, 0.005, 0xff0000);
+        this.createSamplePointsInMap(singleLightSampleUVs, 0.01, 0x0000ff);
+        this.createSamplePointsInMap(clusterLightSampleUVs, 0.01, 0x00ff00);
+        this.createClusterLinesInMap(this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph.edges, 0x000080);
     }
 
     public setSceneEnvironment() {
@@ -272,7 +288,7 @@ class EnvironmentManager {
         oldLightSources.forEach((lightSource: Light) => lightSource.removeFromParent());
     }
 
-    private createDebugSamplePoints(samplePoints: Vector2[], radius: number, color: ColorRepresentation) {
+    private createSamplePointsInMap(samplePoints: Vector2[], radius: number, color: ColorRepresentation) {
         // TODO TREE.Points https://threejs.org/docs/#api/en/objects/Points
         const samplePointGeometry = new CircleGeometry(radius, 8, 4);
         const samplePointMaterial = new MeshBasicMaterial({color: color});
@@ -284,7 +300,7 @@ class EnvironmentManager {
         });
     }
 
-    private createDebugClusterLines(lightSamples: LightSample[], clusterSegments: number[][], color: ColorRepresentation) {
+    private createClusterLinesInMap(lightSamples: LightSample[], clusterSegments: number[][], color: ColorRepresentation) {
         const lineMaterial = new LineBasicMaterial({color});
         const points: Vector3[] = [];
         clusterSegments.forEach((cluster: number[]) => {
