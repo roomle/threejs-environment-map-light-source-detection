@@ -37,7 +37,6 @@ import {
     WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 // @ts-ignore
 import { GroundProjectedSkybox } from 'three/examples/jsm/objects/GroundProjectedSkybox.js';
 // @ts-ignore
@@ -237,7 +236,7 @@ class EnvironmentManager {
         const environmentTexture = this.pmremGenerator.fromEquirectangular(this.equirectangularTexture).texture;
         this.sceneRenderer.scene.environment = environmentTexture;
         //this.sceneRenderer.scene.background = environmentTexture;
-        const skybox = new GroundProjectedSkybox(this.equirectangularTexture);
+        const skybox = new GroundProjectedSkybox(this.equirectangularTexture) as Mesh;
 		skybox.scale.setScalar(100);
         skybox.name = 'skybox';
 	    this.sceneRenderer.scene.add(skybox);
