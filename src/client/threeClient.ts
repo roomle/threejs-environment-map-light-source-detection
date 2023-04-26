@@ -39,6 +39,8 @@ import {
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 // @ts-ignore
+import { GroundProjectedSkybox } from 'three/examples/jsm/objects/GroundProjectedSkybox.js';
+// @ts-ignore
 import Stats from 'three/examples/jsm/libs/stats.module' 
 import { GUI } from 'dat.gui'
 
@@ -234,7 +236,11 @@ class EnvironmentManager {
         this.pmremGenerator = this.pmremGenerator ?? new PMREMGenerator(this.sceneRenderer.renderer);
         const environmentTexture = this.pmremGenerator.fromEquirectangular(this.equirectangularTexture).texture;
         this.sceneRenderer.scene.environment = environmentTexture;
-        this.sceneRenderer.scene.background = environmentTexture;
+        //this.sceneRenderer.scene.background = environmentTexture;
+        const skybox = new GroundProjectedSkybox(this.equirectangularTexture);
+		skybox.scale.setScalar(100);
+        skybox.name = 'skybox';
+	    this.sceneRenderer.scene.add(skybox);
     }
 
     public setMapPlaneTexture() {
@@ -269,7 +275,7 @@ class EnvironmentManager {
         const lightObject: Object3D[] = []
         scene.traverse((object: Object3D) => {
             // @ts-ignore
-            if (object.isLight || ['lightHelper'].includes(object.name)) {
+            if (object.isLight || ['lightHelper', 'skybox'].includes(object.name)) {
                 lightObject.push(object);
             }
         });
