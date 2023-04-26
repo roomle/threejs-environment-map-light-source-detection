@@ -53,8 +53,8 @@ export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas
     const gui = new GUI();
     gui.add<any>(environmentManager, 'map', ['color', 'grayscale', 'detector']).onChange(() => environmentManager.setMapPlaneTexture());
 
-    const setEnvironmentMap = (texture: Texture) => {
-        environmentManager.setEnvironmentMaoAndCreateLightSources(texture);
+    const setEnvironmentMap = (texture: Texture, textureData: any) => {
+        environmentManager.setEnvironmentMaoAndCreateLightSources(texture, textureData);
     }
     loadEnvironmentTexture('blue_photo_studio_1k.hdr', './blue_photo_studio_1k.hdr', setEnvironmentMap);
     setupDragDrop('holder', 'hover', (file: File, event: ProgressEvent<FileReader>) => {
@@ -219,11 +219,11 @@ class EnvironmentManager {
         this.sceneRenderer = sceneRenderer;
     }
 
-    public setEnvironmentMaoAndCreateLightSources(equirectangularTexture: Texture) {
+    public setEnvironmentMaoAndCreateLightSources(equirectangularTexture: Texture, textureData: any) {
         this.removeDeprecatedObjectsFromScene(this.mapRenderer.scene);
         this.removeLightSourcesFromScene(this.sceneRenderer.scene);
         this.equirectangularTexture = equirectangularTexture;
-        this.lightSourceDetector.detectLightSources(this.mapRenderer.renderer, this.equirectangularTexture);
+        this.lightSourceDetector.detectLightSources(this.mapRenderer.renderer, this.equirectangularTexture, textureData);
         this.setMapPlaneTexture();
         this.setSceneEnvironment();
         this.createLightGraphInMap(this.lightSourceDetector.sampleUVs, this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph);
@@ -277,17 +277,21 @@ class EnvironmentManager {
     }
 
     private createLightSources(lightSources: LightSource[]) {
-        const lightIntensityScale = lightSources.length > 0 ? 1 / lightSources[0].lightSamples.length : 1;
+        const mapCenter = new Vector3(0, 0, 0);
+        const maxIntensity = lightSources.length > 0 ? Math.max(...lightSources.map((lightSource: LightSource) => lightSource.maxIntensity)) : 1;
+        const lightIntensityScale = 1 / maxIntensity;
         for (let i=0; i < lightSources.length; ++i) {
             const lightSource = lightSources[i];
-            const lightIntensity = lightSource.intensity * lightIntensityScale;
-            if (lightIntensity < this.lightIntensityThreshold) {
+            console.log(lightSource.size);
+            const lightIntensity = lightSource.maxIntensity * lightIntensityScale;
+            if (lightIntensity < this.lightIntensityThreshold || lightSource.position.z < 0) {
                 continue;
             }
-            const lightPosition = new Vector3(lightSource.position.x, lightSource.position.z, lightSource.position.y).multiplyScalar(this.lightDistanceScale);
+            const lightPosition = new Vector3(lightSource.position.x, lightSource.position.z, lightSource.position.y).multiplyScalar(this.lightDistanceScale).add(mapCenter);
             const directionalLight = new DirectionalLight(0xffffff, lightIntensity);
             directionalLight.position.copy(lightPosition);
-            directionalLight.lookAt(new Vector3(0, 0, 0));
+            directionalLight.lookAt(mapCenter.clone());
+            directionalLight.updateMatrix();
             directionalLight.castShadow = true;
             this.sceneRenderer.scene.add(directionalLight);
             const lightHelper = new DirectionalLightHelper(directionalLight, lightIntensity);
@@ -315,6 +319,7 @@ class EnvironmentManager {
         this.createClusterLinesInMap(this.lightSourceDetector.lightSamples, this.lightSourceDetector.lightGraph.edges, 0x000080);
         const lightSourceUVs = this.lightSourceDetector.lightSources.map((lightSource) => lightSource.uv);
         this.createSamplePointsInMap(lightSourceUVs, 0.015, 0xffff00);
+        this.createCirclesInMap(this.lightSourceDetector.lightSources, 0x808000);
     }
 
     private createSamplePointsInMap(samplePoints: Vector2[], radius: number, color: ColorRepresentation) {
@@ -324,6 +329,17 @@ class EnvironmentManager {
         samplePoints.forEach((samplePoint: Vector2) => {
             const samplePointMesh = new Mesh(samplePointGeometry, samplePointMaterial);
             samplePointMesh.position.copy(this.uvToMapPosition(samplePoint));
+            samplePointMesh.name = 'samplePoint';
+            this.mapRenderer.scene.add(samplePointMesh);
+        });
+    }
+
+    private createCirclesInMap(lightSources: LightSource[], color: ColorRepresentation) {
+        const samplePointMaterial = new MeshBasicMaterial({color: color, transparent: true, opacity: 0.5});
+        lightSources.forEach((lightSource: LightSource) => {
+            const samplePointGeometry = new CircleGeometry(lightSource.size, 8, 4);
+            const samplePointMesh = new Mesh(samplePointGeometry, samplePointMaterial);
+            samplePointMesh.position.copy(this.uvToMapPosition(lightSource.uv));
             samplePointMesh.name = 'samplePoint';
             this.mapRenderer.scene.add(samplePointMesh);
         });

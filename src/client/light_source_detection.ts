@@ -134,6 +134,7 @@ export class LightSourceDetector {
     public readonly pixelDistance: number;
     public readonly samplePoints: Vector3[] = [];
     public readonly sampleUVs: Vector2[] = [];
+    public textureData?: any;
     public grayscaleTexture: TextureConverterResult = { 
         texture: new Texture(),
         pixels: new Uint8Array(0),
@@ -156,7 +157,8 @@ export class LightSourceDetector {
         this.sampleUVs = this.samplePoints.map((point) => sphereToEquirectangular(point));
     }
 
-    public detectLightSources(renderer: WebGLRenderer, equirectangularTexture: Texture) {
+    public detectLightSources(renderer: WebGLRenderer, equirectangularTexture: Texture, textureData?: any) {
+        this.textureData = textureData;
         this.textureConverter = this.textureConverter ?? new TextureConverter();
         this.grayscaleTexture = this.textureConverter.newGrayscaleTexture(
             renderer, equirectangularTexture, this.width, this.height);
@@ -167,7 +169,7 @@ export class LightSourceDetector {
         this.lightGraph = this.findClusterSegments(this.lightSamples, this.sampleThreshold);
         this.lightGraph.findConnectedComponents()
         this.lightSources = this.createLightSourcesFromLightGraph(this.lightSamples, this.lightGraph);
-        this.lightSources.sort((a, b) => b.intensity - a.intensity);
+        this.lightSources.sort((a, b) => b.maxIntensity - a.maxIntensity);
     }
 
     private createEquirectangularSamplePoints = (numberOfPoints: number): Vector3[] => {
@@ -225,7 +227,7 @@ export class LightSourceDetector {
         const lightSamples: LightSample[] = [];
         for (let i = 0; i < this.sampleUVs.length; i++) {
             const uv = this.sampleUVs[i];
-            const value = this.luminanceValueFromUV(uv);
+            const value = this.detectorTextureLuminanceValueFromUV(uv);
             if (value > threshold) {
                 lightSamples.push(new LightSample(this.samplePoints[i], uv));
             }
@@ -233,11 +235,28 @@ export class LightSourceDetector {
         return lightSamples;
     }
 
-    private luminanceValueFromUV(uv: Vector2): number {
+    private detectorTextureLuminanceValueFromUV(uv: Vector2): number {
         const column = Math.floor(uv.x * this.width);
         const row = Math.floor(uv.y * this.height);
         const index = row * this.width + column;
         return this.detectorArray[index];
+    }
+
+    private originalLuminanceValueFromUV(uv: Vector2): number {
+        if (!this.textureData || !this.textureData.data || !this.textureData.width || !this.textureData.height) {
+            return this.detectorTextureLuminanceValueFromUV(uv) * 256;
+        }
+        const column = Math.floor(uv.x * this.textureData.width);
+        const row = Math.floor(uv.y * this.textureData.height);
+        let luminance = 0;
+        for (let x = Math.max(0, column-2); x < Math.max(0, column+2); ++x) {
+            for (let y = Math.max(0, row-2); y < Math.max(0, row+2); ++y) {
+                const index = y * this.textureData.width + x;
+                const grayValue = (this.textureData.data[index * 4] + this.textureData.data[index * 4 + 1] + this.textureData.data[index * 4 + 2]) / 3;
+                luminance = Math.max(luminance, grayValue);
+            }
+        }
+        return luminance;
     }
 
     private findClusterSegments(samples: LightSample[], threshold: number): LightGraph {
@@ -254,7 +273,7 @@ export class LightSourceDetector {
                     for (let k = 1; k < steps; k++) {
                         const step = direction.clone().multiplyScalar(k / steps);
                         const uv = sphereToEquirectangular(samples[i].position.clone().add(step).normalize());
-                        const value = this.luminanceValueFromUV(uv);
+                        const value = this.detectorTextureLuminanceValueFromUV(uv);
                         if (value < threshold) {
                             outOfTresholdCount++;
                             if (outOfTresholdCount > 1) {
@@ -280,7 +299,7 @@ export class LightSourceDetector {
         const lightSources: LightSource[] = lightGraph.components.filter(component => component.length > 1).map(
             component => new LightSource(component.map(index => samples[index])));
         lightSources.forEach(lightSource =>
-             lightSource.calculateLightSourceProperties((uv) => this.luminanceValueFromUV(uv)));
+             lightSource.calculateLightSourceProperties((uv) => this.originalLuminanceValueFromUV(uv)));
         return lightSources;
     }
 }
@@ -336,7 +355,9 @@ export class LightSource {
     public readonly lightSamples: LightSample[];
     public position: Vector3 = new Vector3();
     public uv: Vector2 = new Vector2();
-    public intensity: number = 0;
+    public averageIntensity: number = 0;
+    public maxIntensity: number = 0;
+    public size: number = 0;
 
     constructor(lightSamples: LightSample[]) {
         this.lightSamples = lightSamples;
@@ -344,13 +365,23 @@ export class LightSource {
 
     public calculateLightSourceProperties(luminanceFunction: (uv: Vector2) => number) {
         this.position = new Vector3();
-        this.intensity = 0;
+        this.averageIntensity = 0;
+        this.maxIntensity = 0; 
         for (const lightSample of this.lightSamples) {
             this.position.add(lightSample.position);
-            this.intensity += luminanceFunction(lightSample.uv);
+            const luminanceValue = luminanceFunction(lightSample.uv);
+            this.averageIntensity += luminanceValue;
+            this.maxIntensity = Math.max(this.maxIntensity, luminanceValue);
         }
+        this.averageIntensity /= this.lightSamples.length; 
         this.position.normalize();
         this.uv = sphereToEquirectangular(this.position);
+        let averageDistance = 0;
+        for (const lightSample of this.lightSamples) {
+            averageDistance += lightSample.position.distanceTo(this.position);
+        }
+        averageDistance /= this.lightSamples.length;
+        this.size = averageDistance / Math.PI;
     }
 }
 
