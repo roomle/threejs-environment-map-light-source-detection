@@ -53,6 +53,7 @@ export const environmentMapLightSourceDetection = (map_canvas: any, scene_canvas
     document.body.appendChild(stats.dom);
     const gui = new GUI();
     gui.add<any>(environmentManager, 'map', ['color', 'grayscale', 'detector']).onChange(() => environmentManager.setMapPlaneTexture());
+    gui.add<any>(environmentManager, 'groundProject').onChange(() => environmentManager.setBackground());
 
     const setEnvironmentMap = (texture: Texture, textureData: any) => {
         environmentManager.setEnvironmentMaoAndCreateLightSources(texture, textureData);
@@ -193,12 +194,14 @@ interface SceneRenderer {
 
 class EnvironmentManager {
     public map: string = 'detector';
+    public groundProject: boolean = true;
     private detectorWidth: number = 1024;
     private detectorHeight: number = 512;
     private sampleThreshold: number = 0.9;
     private noOfSamples: number = 1500;
     private lightIntensityThreshold: number = 0.2;
     private lightDistanceScale: number = 5.0;
+    private skybox: Mesh | undefined = undefined;
     private mapRenderer: MapRenderer;
     private sceneRenderer: SceneRenderer;
     private pmremGenerator?: PMREMGenerator;
@@ -235,11 +238,25 @@ class EnvironmentManager {
         this.pmremGenerator = this.pmremGenerator ?? new PMREMGenerator(this.sceneRenderer.renderer);
         const environmentTexture = this.pmremGenerator.fromEquirectangular(this.equirectangularTexture).texture;
         this.sceneRenderer.scene.environment = environmentTexture;
-        //this.sceneRenderer.scene.background = environmentTexture;
-        const skybox = new GroundProjectedSkybox(this.equirectangularTexture) as Mesh;
-		skybox.scale.setScalar(100);
-        skybox.name = 'skybox';
-	    this.sceneRenderer.scene.add(skybox);
+        this.skybox = new GroundProjectedSkybox(this.equirectangularTexture) as Mesh;
+		this.skybox.scale.setScalar(100);
+        this.skybox.name = 'skybox';
+	    this.sceneRenderer.scene.add(this.skybox);
+        this.setBackground();
+    }
+
+    public setBackground() {
+        if (this.groundProject) {
+            this.sceneRenderer.scene.background = null;
+            if (this.skybox !== undefined) {
+                this.skybox.visible = true;
+            }
+        } else {
+            this.sceneRenderer.scene.background = this.sceneRenderer.scene.environment;
+            if (this.skybox !== undefined) {
+                this.skybox.visible = false;
+            }
+        }
     }
 
     public setMapPlaneTexture() {
