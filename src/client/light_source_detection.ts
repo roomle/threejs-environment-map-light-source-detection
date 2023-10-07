@@ -37,8 +37,9 @@ export interface TextureConverterResult {
 
 export class TextureConverter {
   private _colorRenderTarget?: WebGLRenderTarget;
-  private _grayscaleRenderTarget?: WebGLRenderTarget;
-  private _grayscaleShaderMaterial?: GrayscaleShaderMaterial;
+  private _environmentMapDecodeTarget?: WebGLRenderTarget;
+  private _equirectangularDecodeMaterial?: EnvironmentMapDecodeMaterial;
+  private _pmremDecodeMaterial?: EnvironmentMapDecodeMaterial;
   private _camera?: OrthographicCamera;
   private planeMesh?: Mesh;
 
@@ -48,17 +49,23 @@ export class TextureConverter {
     return this._colorRenderTarget;
   }
 
-  get grayscaleRenderTarget(): WebGLRenderTarget {
-    this._grayscaleRenderTarget =
-      this._grayscaleRenderTarget ?? new WebGLRenderTarget();
-    //this._grayscaleRenderTarget = this._grayscaleRenderTarget ?? new WebGLRenderTarget(1, 1, { format: RedFormat });
-    return this._grayscaleRenderTarget;
+  get environmentMapDecodeTarget(): WebGLRenderTarget {
+    this._environmentMapDecodeTarget =
+      this._environmentMapDecodeTarget ?? new WebGLRenderTarget();
+    //this._grayscaleRenderTarget = this._environmentMapDecodeTarget ?? new WebGLRenderTarget(1, 1, { format: RedFormat });
+    return this._environmentMapDecodeTarget;
   }
 
-  get grayscaleShaderMaterial(): GrayscaleShaderMaterial {
-    this._grayscaleShaderMaterial =
-      this._grayscaleShaderMaterial ?? new GrayscaleShaderMaterial();
-    return this._grayscaleShaderMaterial;
+  environmentMapDecodeMaterial(decodePmrem: boolean): EnvironmentMapDecodeMaterial {
+    if (decodePmrem) {
+      this._equirectangularDecodeMaterial =
+        this._equirectangularDecodeMaterial ?? new EnvironmentMapDecodeMaterial(true, false);
+      return this._equirectangularDecodeMaterial;
+    } else {
+      this._pmremDecodeMaterial =
+        this._pmremDecodeMaterial ?? new EnvironmentMapDecodeMaterial(false, false);
+      return this._pmremDecodeMaterial;
+    }
   }
 
   get camera(): OrthographicCamera {
@@ -83,7 +90,7 @@ export class TextureConverter {
     renderer.setRenderTarget(this.colorRenderTarget);
     renderer.render(this.planeMesh, this.camera);
     renderer.setRenderTarget(renderTargetBackup);
-    const colorTexture = this.grayscaleRenderTarget.texture;
+    const colorTexture = this.environmentMapDecodeTarget.texture;
     const pixelBuffer = new Uint8Array(targetWidth * targetHeight * 4);
     renderer.readRenderTargetPixels(
       this.colorRenderTarget,
@@ -102,19 +109,20 @@ export class TextureConverter {
     targetWidth: number,
     targetHeight: number
   ): TextureConverterResult {
-    this.grayscaleRenderTarget.setSize(targetWidth, targetHeight);
-    this.grayscaleShaderMaterial.setSourceTexture(texture);
+    const decodeMaterial = this.environmentMapDecodeMaterial(texture.name === "PMREM.cubeUv");
+    this.environmentMapDecodeTarget.setSize(targetWidth, targetHeight);
+    decodeMaterial.setSourceTexture(texture);
     this.planeMesh =
       this.planeMesh ??
-      new Mesh(new PlaneGeometry(2, 2), this.grayscaleShaderMaterial);
+      new Mesh(new PlaneGeometry(2, 2), decodeMaterial);
     const renderTargetBackup = renderer.getRenderTarget();
-    renderer.setRenderTarget(this.grayscaleRenderTarget);
+    renderer.setRenderTarget(this.environmentMapDecodeTarget);
     renderer.render(this.planeMesh, this.camera);
     renderer.setRenderTarget(renderTargetBackup);
-    const grayscaleTexture = this.grayscaleRenderTarget.texture;
+    const grayscaleTexture = this.environmentMapDecodeTarget.texture;
     const pixelBuffer = new Uint8Array(targetWidth * targetHeight * 4);
     renderer.readRenderTargetPixels(
-      this.grayscaleRenderTarget,
+      this.environmentMapDecodeTarget,
       0,
       0,
       targetWidth,
@@ -125,7 +133,7 @@ export class TextureConverter {
   }
 }
 
-const GrayscaleShader = {
+const EnvironmentMapDecodeShader = {
   uniforms: {
     tDiffuse: { value: null as Texture | null },
   },
@@ -138,20 +146,54 @@ const GrayscaleShader = {
   fragmentShader: `
         uniform sampler2D tDiffuse;
         varying vec2 vUv;
+        #if PMREM_DECODE == 1
+            #define ENVMAP_TYPE_CUBE_UV
+        #endif
+        #include <cube_uv_reflection_fragment>
         void main() {
-            vec4 color = texture2D(tDiffuse, vUv);
-            float grayscale = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
-            //float grayscale = dot(color.rgb, vec3(1.0/3.0));
-            gl_FragColor = vec4(vec3(grayscale), 1.0);
+            #if PMREM_DECODE == 1
+                float altitude = (vUv.y - 0.5) * 3.141593;
+                float azimuth = vUv.x * 2.0 * 3.141593;
+                vec3 direction = vec3(
+                  cos(altitude) * cos(azimuth) * -1.0, 
+                  sin(altitude), 
+                  cos(altitude) * sin(azimuth) * -1.0
+                );
+                float face = getFace(direction);
+                vec2 uv = getUV(direction, face) / vec2(3.0, 4.0);
+                if (face > 2.5) {
+                    uv.y += 0.25;
+                    face -= 3.0;
+                }
+                uv.x += face / 3.0;
+                vec4 color = texture2D(tDiffuse, uv);
+            #else
+                vec4 color = texture2D(tDiffuse, vUv);
+            #endif    
+            #if GRAYSCALE_CONVERT == 1
+                float grayscale = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+                //float grayscale = dot(color.rgb, vec3(1.0/3.0));
+                gl_FragColor = vec4(vec3(grayscale), 1.0);
+            #else
+                gl_FragColor = vec4(color.rgb, 1.0);
+            #endif
         }`,
 };
 
-export class GrayscaleShaderMaterial extends ShaderMaterial {
-  constructor() {
+export class EnvironmentMapDecodeMaterial extends ShaderMaterial {
+  constructor(decodePmrem: boolean, grayscale: boolean) {
     super({
-      uniforms: UniformsUtils.clone(GrayscaleShader.uniforms),
-      vertexShader: GrayscaleShader.vertexShader,
-      fragmentShader: GrayscaleShader.fragmentShader,
+      uniforms: UniformsUtils.clone(EnvironmentMapDecodeShader.uniforms),
+      vertexShader: EnvironmentMapDecodeShader.vertexShader,
+      fragmentShader: EnvironmentMapDecodeShader.fragmentShader,
+      defines: {
+        PMREM_DECODE: decodePmrem ? 1: 0,
+        GRAYSCALE_CONVERT: grayscale ? 1 : 0,
+        CUBEUV_MAX_MIP: "0.0",
+        CUBEUV_TEXEL_WIDTH: "1.0",
+        CUBEUV_TEXEL_HEIGHT: "1.0",
+        exp2: "float",
+      }
     });
   }
 
