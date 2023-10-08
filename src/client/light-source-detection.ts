@@ -242,7 +242,7 @@ export class LightSourceDetector {
   public detectLightSources(
     renderer: WebGLRenderer,
     equirectangularTexture: Texture,
-    textureData?: any
+    textureData?: void
   ) {
     this.textureData = textureData;
     this.textureConverter = this.textureConverter ?? new TextureConverter();
