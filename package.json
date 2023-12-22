@@ -24,6 +24,7 @@
     "dat.gui": "^0.7.9",
     "install-peers": "^1.0.4",
     "npm-check-updates": "^16.14.12",
+    "prettier": "3.1.1",
     "three": "^0.159.0",
     "ts-loader": "^9.5.1",
     "typescript": "^5.3.3",
